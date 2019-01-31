@@ -11,7 +11,6 @@ import asyncio
 import ssl
 import struct
 import shelve
-from collections import defaultdict
 
 
 class AsyncServer(asyncio.Protocol):
@@ -91,7 +90,7 @@ class AsyncServer(asyncio.Protocol):
                     self.request_question()
 
                 elif data["DATA_TYPE"] == "QUESTION_DATA":
-                    self.handle_question(data)
+                    self.forward_question(data)
 
                 elif data["DATA_TYPE"] == "ANSWER_DATA":
                     self.answer_question(data)
@@ -164,146 +163,10 @@ class AsyncServer(asyncio.Protocol):
         self.broadcast("DESKTOP", request)
 
     # TODO: Determines if message is a command then handles it accordingly
-    def handle_question(self, data):
-        msg = {"MESSAGES": []}
+    def forward_question(self, data):
+        pass
 
-        for message in data["MESSAGES"]:
-            print(message)
-
-            # Possible command found
-            if message[3].startswith('/'):
-
-                tokenized_message = message[3].split()
-
-                # COMMAND: /Name
-                # FUNCTION: returns client's username
-                if tokenized_message[0] == '/Name':
-                    message[3] = "Your username is " + self.user_id;
-                    dm = {"MESSAGES": [message]}
-                    dm = json.dumps(dm).encode('ascii')
-                    self.broadcast(message[1], dm)
-
-                # COMMAND: /Block <username>
-                # FUNCTION: blocks messages to and from the specified username
-                elif tokenized_message[0] == '/Block':
-
-                    tokenized_message.pop(0)
-                    block_users_list = tokenized_message
-
-                    server_message = "The following users will now be blocked: "
-
-                    for user in block_users_list:
-                        if user in AsyncServer.all_users_ever_logged and user != self.user_id:
-                            server_message += (" " + user)
-
-                            if AsyncServer.client_blocked_users is not None and self.user_id in AsyncServer.client_blocked_users:
-                                AsyncServer.client_blocked_users[self.user_id].add(user)
-                            else:
-
-                                print(type(AsyncServer.client_blocked_users))
-                                AsyncServer.client_blocked_users[self.user_id]
-                                AsyncServer.client_blocked_users[self.user_id] = set()
-                                AsyncServer.client_blocked_users[self.user_id].add(user)
-                                print("Set ", AsyncServer.client_blocked_users[self.user_id])
-
-                    message[3] = server_message
-                    dm = {"MESSAGES": [message]}
-                    dm = json.dumps(dm).encode('ascii')
-                    self.broadcast(message[1], dm)
-
-                # COMMAND: /UnBlock <username>
-                # FUNCTION: unblocks messages from the specified username
-                # NOTE: if the unblocked user has blocked the current client
-                #       messages still cannot be sent between the two clients
-                elif tokenized_message[0] == '/UnBlock':
-
-                    if self.user_id in AsyncServer.client_blocked_users:
-
-                        tokenized_message.pop(0)
-
-                        unblock_users_set = tokenized_message
-
-                        server_message = "The following users will now be un-blocked: "
-
-                        for user in unblock_users_set:
-
-                            if user in AsyncServer.client_blocked_users[self.user_id] and user != self.user_id:
-                                server_message += (" " + user)
-
-                                if self.user_id in AsyncServer.client_blocked_users:
-                                    AsyncServer.client_blocked_users = AsyncServer.client_blocked_users[self.user_id] \
-                                        .remove(user)
-
-                        message[3] = server_message
-                        dm = {"MESSAGES": [message]}
-                        dm = json.dumps(dm).encode('ascii')
-                        self.broadcast(message[0], dm)
-
-                # COMMAND: /Blocked
-                # FUNCTION: shows all users whom the client has blocked
-                elif tokenized_message[0] == '/Blocked':
-
-                    if AsyncServer.client_blocked_users is not None and \
-                            self.user_id in AsyncServer.client_blocked_users and \
-                            len(AsyncServer.client_blocked_users[self.user_id]) != 0:
-                        blocked_users_set = AsyncServer.client_blocked_users[self.user_id]
-                        server_message = "You currently have these users blocked: " + " ".join(
-                            str(user) for user in blocked_users_set)
-
-                    else:
-                        server_message = "You have no users blocked"
-
-                    message[3] = server_message
-                    dm = {"MESSAGES": [message]}
-                    dm = json.dumps(dm).encode('ascii')
-                    self.broadcast(message[1], dm)
-
-                # COMMAND: /DisplayUsers
-                # FUNCTION: Display all currently active users
-                elif tokenized_message[0] == '/DisplayUsers':
-
-                    message[3] = '\n\nCURRENT USER(S) ONLINE\n' + str('-' * 22) + '\n' + "\n".join(
-                        str(user) for user in AsyncServer.transport_map)
-                    dm = {"MESSAGES": [message]}
-                    dm = json.dumps(dm).encode('ascii')
-                    self.broadcast(message[1], dm)
-
-                # COMMAND: /DisplayAllUsers
-                # FUNCTION: Display all users who have ever accessed the server
-                elif tokenized_message[0] == '/DisplayAllUsers':
-
-                    server_message = '\n\n   ALL USER(S)\n' + str('-' * 22) + '\n'
-
-                    for user in AsyncServer.all_users_ever_logged:
-                        server_message = server_message + '\n' + str(user)
-
-                        if user in AsyncServer.transport_map:
-                            server_message = server_message + ' : ONLINE'
-                        else:
-                            server_message = server_message + ' : OFFLINE'
-
-                    message[3] = server_message
-                    dm = {"MESSAGES": [message]}
-                    dm = json.dumps(dm).encode('ascii')
-                    self.broadcast(message[1], dm)
-
-            # Those messages that are directed to all get appended to the
-            # Monolithic message
-            elif message[1] == 'ALL':
-                msg["MESSAGES"].append(message)
-                AsyncServer.messages.append(message)
-
-            # If a message is directed to a specific user we pull it out of the
-            # list of messages and send it to the designated client
-            else:
-                dm = {"MESSAGES": [message]}
-                dm = json.dumps(dm).encode('ascii')
-                self.broadcast(message[1], dm)
-
-        msg = json.dumps(msg).encode('ascii')
-        self.broadcast("ALL", msg)
-
-    # Takes answer data, forwards it to desktop, and stores it as needed
+    # TODO: Takes answer data, forwards it to desktop, and stores it as needed
     def answer_question(self, data):
         pass
 
