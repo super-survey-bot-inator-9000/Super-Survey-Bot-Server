@@ -95,6 +95,9 @@ class AsyncServer(asyncio.Protocol):
                 elif data["DATA_TYPE"] == "ANSWER_DATA":
                     self.answer_question(data)
 
+                elif data["DATA_TYPE"] == "BACKUP_DATA":
+                    self.backup_data(data)
+
                 else:
                     print("New message type!!! " + data["DATA_TYPE"] + ": " + data)
 
@@ -162,12 +165,22 @@ class AsyncServer(asyncio.Protocol):
         # Send request
         self.broadcast("DESKTOP", request)
 
-    # TODO: Determines if message is a command then handles it accordingly
+    # Determines if companion is active and forwards question data
     def forward_question(self, data):
-        pass
+        if self.has_companion():
+            self.current_transport = AsyncServer.transport_map[self.user_id]["MOBILE"]
 
-    # TODO: Takes answer data, forwards it to desktop, and stores it as needed
+            self.broadcast("MOBILE", data)
+
+    # Takes answer data, forwards it to desktop, and stores it as needed
     def answer_question(self, data):
+        if self.has_companion():
+            self.current_transport = AsyncServer.transport_map[self.user_id]["DESKTOP"]
+
+            self.broadcast("DESKTOP", data)
+
+    # TODO: Backup data to server
+    def backup_data(self):
         pass
 
     # Check for companion application
