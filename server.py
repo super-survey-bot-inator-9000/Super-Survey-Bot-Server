@@ -10,20 +10,18 @@ import argparse
 import asyncio
 import ssl
 import struct
-import pickle
+import shelve
 from collections import defaultdict
 
 
-
 class AsyncServer(asyncio.Protocol):
-    transport_map = {}  # Map of usernames to transports
-    messages = []  # All messages for dump to user upon login
+    transport_map = {}  # Map of user_id's to transports
     all_users_ever_logged = set()  # Init a set of all users ever logged into the server
-    client_blocked_users = defaultdict(dict)  # Shows the relationship between given users and their blocked user names
 
     def __init__(self):
         super().__init__()
-        self.username = ""
+        self.user_id = None
+        self.device_type = None
 
         # Establish the user associated with this object
         self.thread_transport = None
@@ -37,18 +35,10 @@ class AsyncServer(asyncio.Protocol):
         self.__buffer = ""
         self.data_len = 0
 
-        #Pull data from db upon client init
-        with open('server_data.pkl', 'rb') as f:
-            AsyncServer.messages = pickle.load(f)
-            AsyncServer.all_users_ever_logged = pickle.load(f)
-            AsyncServer.client_blocked_users = pickle.load(f)
-
-        if AsyncServer.client_blocked_users is None:
-            AsyncServer.client_blocked_users = defaultdict(dict)
-
-        if AsyncServer.messages is None:
-            AsyncServer.messages = list()
-
+        # Pull data from db upon client init
+        self.db = shelve.open('data/client_lists')
+        AsyncServer.all_users_ever_logged = self.db["all_users"]
+        
         if AsyncServer.all_users_ever_logged is None:
             AsyncServer.all_users_ever_logged = set()
 
@@ -67,65 +57,14 @@ class AsyncServer(asyncio.Protocol):
         msg += data
         self.current_transport.write(msg)
 
-    # Sends data to intended audience with the qualifier that said audience
-    # isn't blocked and haven't blocked this user
+    # Sends data to intended audience with the
+    # qualifier that said audience exists
     def broadcast(self, audience, data):
-
-        # Sending messages to themselves
-        if audience is self.username:
-            self.current_transport = self.thread_transport
+        if audience in AsyncServer.transport_map[self.user_id]:
+            self.current_transport = AsyncServer.transport_map[self.user_id][audience]
             self.send_message(data)
 
-        # Send messages to all users logged into the system
-        elif audience == 'ALL':
-            for user in AsyncServer.transport_map:
-
-                # Ensures user messages to be properly blocked
-                if AsyncServer.client_blocked_users is not None and self.username in AsyncServer.client_blocked_users:
-
-                    if AsyncServer.client_blocked_users[self.username] is not None and user not in AsyncServer.client_blocked_users[self.username]:
-                        self.current_transport = AsyncServer.transport_map[user]
-                        self.send_message(data)
-
-                # ----
-                elif AsyncServer.client_blocked_users is not None and user in AsyncServer.client_blocked_users:
-
-                    if AsyncServer.client_blocked_users[user] is not None and self.username not in AsyncServer.client_blocked_users[user]:
-                        self.current_transport = AsyncServer.transport_map[user]
-                        self.send_message(data)
-
-                else:
-                    self.current_transport = AsyncServer.transport_map[user]
-                    self.send_message(data)
-
-        # If we are sending a dm
-        elif audience in AsyncServer.transport_map:
-
-            # Ensures user messages to be properly blocked
-            if AsyncServer.client_blocked_users is not None and audience in AsyncServer.client_blocked_users:
-
-                if AsyncServer.client_blocked_users[audience] is not None and self.username not in AsyncServer.client_blocked_users[audience]:
-                    self.current_transport = AsyncServer.transport_map[audience]
-                    self.send_message(data)
-            # -----
-            elif AsyncServer.client_blocked_users is not None and self.username in AsyncServer.client_blocked_users:
-
-                if AsyncServer.client_blocked_users[self.username] is not None and audience not in AsyncServer.client_blocked_users[self.username]:
-                    self.current_transport = AsyncServer.transport_map[audience]
-                    self.send_message(data)
-
-            else:
-                self.current_transport = AsyncServer.transport_map[audience]
-                self.send_message(data)
-
-        # Would be called if the message is to an audience that doesn't exist
-        else:
-            self.current_transport = self.thread_transport
-            msg = {"ERROR": "Specified username does not exist (or at least is not online)"}
-            msg = json.dumps(msg).encode('ascii')
-            self.send_message(msg)
-
-    # Handles all data recived from
+    # Handles all data received from client
     def data_received(self, data):
         if self.__buffer == '':
             # Find first brace and offset the data by that
@@ -144,15 +83,21 @@ class AsyncServer(asyncio.Protocol):
             # If we receive anything else we want to recognize it so we
             # Output it to the server console, otherwise we direct the data
             # To the proper management function
-            for key in data:
-                if key == "USERNAME":
-                    self.make_user(data)
+            if "DATA_TYPE" in data:
+                if data["DATA_TYPE"] == "USER_ID":
+                    self.validate_user(data)
 
-                elif key == "MESSAGES":
-                    self.handle_messages(data)
+                elif data["DATA_TYPE"] == "QUESTION_REQUEST":
+                    self.request_question()
+
+                elif data["DATA_TYPE"] == "QUESTION_DATA":
+                    self.handle_question(data)
+
+                elif data["DATA_TYPE"] == "ANSWER_DATA":
+                    self.answer_question(data)
 
                 else:
-                    print("New message type!!! " + key + ": " + data[key])
+                    print("New message type!!! " + data["DATA_TYPE"] + ": " + data)
 
     # Pre: Takes in a username
     # Post: Returns username accepted status, and optionally updates user with
@@ -162,65 +107,64 @@ class AsyncServer(asyncio.Protocol):
     #       transports variable notify them that they are logged in,  send them
     #       all previous message data, and notify other users that the new user
     #       has joined the server
-    def make_user(self, data):
-        key = "USERNAME"
-        user_accept = {"USERNAME_ACCEPTED": False}
+    def validate_user(self, data):
+        user_accept = {
+            "USER_ID_VALID": False,
+            "LOGIN_SUCCESSFUL": False,
+            "COMPANION_ACTIVE": False
+        }
 
-        if data[key] not in AsyncServer.transport_map:
-            user_accept["USERNAME_ACCEPTED"] = True
-            user_accept["INFO"] = "Welcome to the server!"
-            self.username = data[key]
-            AsyncServer.transport_map[data[key]] = self.thread_transport
+        self.device_type = data["DEVICE_TYPE"]
+        companion = "DESKTOP" if self.device_type == "MOBILE" else "DESKTOP"
 
-            users_online = []
-            for user in AsyncServer.transport_map:
-                users_online.append(user)
+        if self.user_id in AsyncServer.all_users_ever_logged or \
+                self.device_type == "DESKTOP":
 
-            user_accept["USER_LIST"] = self.get_users()
+            user_accept["USER_ID_VALID"] = True
 
-            message_dump = AsyncServer.messages
+            # If no user active with id and device type
+            # User accepted
+            if data["USER_ID"] not in AsyncServer.transport_map:
+                AsyncServer.transport_map[data["USER_ID"]] = {
+                    self.device_type: self.thread_transport,
+                    companion: None
+                }
 
-            if AsyncServer.client_blocked_users is not None and self.username in AsyncServer.client_blocked_users:
-                message_dump = list(
-                    filter(lambda message: message[0] not in AsyncServer.client_blocked_users[self.username],
-                           message_dump))
+                user_accept["LOGIN_SUCCESSFUL"] = True
 
-            user_accept["MESSAGES"] = message_dump
+            # User id active on different device type
+            elif self.device_type not in AsyncServer.transport_map[self.user_id]:
+                # Add current transport to map
+                AsyncServer.transport_map[data["USER_ID"]][self.device_type] = self.transport_map
 
-        else:
-            user_accept["USERNAME_ACCEPTED"] = False
+                user_accept["LOGIN_SUCCESSFUL"] = True
+                user_accept["COMPANION_ACTIVE"] = True
+
+        if user_accept["LOGIN_SUCCESSFUL"]:
+            # Set user id
+            self.user_id = data["USER_ID"]
+
+            # Make sure user id in all users ever logged
+            AsyncServer.all_users_ever_logged.add(self.user_id)
 
         msg = json.dumps(user_accept).encode('ascii')
         self.send_message(msg)
 
-        if user_accept["USERNAME_ACCEPTED"]:
-            self.new_user(data[key])
-            AsyncServer.all_users_ever_logged.add(data[key])
+    # Get's question from desktop client and sends it to mobile
+    def request_question(self):
+        # Create request packet
+        request = {
+            "DATA_TYPE": "QUESTION_REQUEST"
+        }
 
-    def new_user(self, username):
-        user_message = {"USERS_JOINED": [username]}
-        user_message = json.dumps(user_message).encode('ascii')
-        self.broadcast("ALL", user_message)
+        # Set current transport to desktop
+        self.current_transport = AsyncServer.transport_map[self.user_id]["DESKTOP"]
 
-    # Gets an array of user objects
-    def get_users(self):
-        userlist = []
+        # Send request
+        self.broadcast("DESKTOP", request)
 
-        for username in self.all_users_ever_logged:
-            userlist.append({
-                "name" : username,
-                "active" : False
-            })
-        
-        for username in AsyncServer.transport_map:
-            for user in userlist:
-                if user["name"] == username:
-                    user["active"] = True 
-
-        return userlist
-
-    # Determines if message is a command then handles it accordingly
-    def handle_messages(self, data):
+    # TODO: Determines if message is a command then handles it accordingly
+    def handle_question(self, data):
         msg = {"MESSAGES": []}
 
         for message in data["MESSAGES"]:
@@ -234,7 +178,7 @@ class AsyncServer(asyncio.Protocol):
                 # COMMAND: /Name
                 # FUNCTION: returns client's username
                 if tokenized_message[0] == '/Name':
-                    message[3] = "Your username is " + self.username;
+                    message[3] = "Your username is " + self.user_id;
                     dm = {"MESSAGES": [message]}
                     dm = json.dumps(dm).encode('ascii')
                     self.broadcast(message[1], dm)
@@ -249,18 +193,18 @@ class AsyncServer(asyncio.Protocol):
                     server_message = "The following users will now be blocked: "
 
                     for user in block_users_list:
-                        if user in AsyncServer.all_users_ever_logged and user != self.username:
+                        if user in AsyncServer.all_users_ever_logged and user != self.user_id:
                             server_message += (" " + user)
 
-                            if AsyncServer.client_blocked_users is not None and self.username in AsyncServer.client_blocked_users:
-                                AsyncServer.client_blocked_users[self.username].add(user)
+                            if AsyncServer.client_blocked_users is not None and self.user_id in AsyncServer.client_blocked_users:
+                                AsyncServer.client_blocked_users[self.user_id].add(user)
                             else:
 
                                 print(type(AsyncServer.client_blocked_users))
-                                AsyncServer.client_blocked_users[self.username]
-                                AsyncServer.client_blocked_users[self.username] = set()
-                                AsyncServer.client_blocked_users[self.username].add(user)
-                                print("Set ", AsyncServer.client_blocked_users[self.username])
+                                AsyncServer.client_blocked_users[self.user_id]
+                                AsyncServer.client_blocked_users[self.user_id] = set()
+                                AsyncServer.client_blocked_users[self.user_id].add(user)
+                                print("Set ", AsyncServer.client_blocked_users[self.user_id])
 
                     message[3] = server_message
                     dm = {"MESSAGES": [message]}
@@ -273,7 +217,7 @@ class AsyncServer(asyncio.Protocol):
                 #       messages still cannot be sent between the two clients
                 elif tokenized_message[0] == '/UnBlock':
 
-                    if self.username in AsyncServer.client_blocked_users:
+                    if self.user_id in AsyncServer.client_blocked_users:
 
                         tokenized_message.pop(0)
 
@@ -283,11 +227,11 @@ class AsyncServer(asyncio.Protocol):
 
                         for user in unblock_users_set:
 
-                            if user in AsyncServer.client_blocked_users[self.username] and user != self.username:
+                            if user in AsyncServer.client_blocked_users[self.user_id] and user != self.user_id:
                                 server_message += (" " + user)
 
-                                if self.username in AsyncServer.client_blocked_users:
-                                    AsyncServer.client_blocked_users = AsyncServer.client_blocked_users[self.username] \
+                                if self.user_id in AsyncServer.client_blocked_users:
+                                    AsyncServer.client_blocked_users = AsyncServer.client_blocked_users[self.user_id] \
                                         .remove(user)
 
                         message[3] = server_message
@@ -300,9 +244,9 @@ class AsyncServer(asyncio.Protocol):
                 elif tokenized_message[0] == '/Blocked':
 
                     if AsyncServer.client_blocked_users is not None and \
-                            self.username in AsyncServer.client_blocked_users and \
-                            len(AsyncServer.client_blocked_users[self.username]) != 0:
-                        blocked_users_set = AsyncServer.client_blocked_users[self.username]
+                            self.user_id in AsyncServer.client_blocked_users and \
+                            len(AsyncServer.client_blocked_users[self.user_id]) != 0:
+                        blocked_users_set = AsyncServer.client_blocked_users[self.user_id]
                         server_message = "You currently have these users blocked: " + " ".join(
                             str(user) for user in blocked_users_set)
 
@@ -316,7 +260,7 @@ class AsyncServer(asyncio.Protocol):
 
                 # COMMAND: /DisplayUsers
                 # FUNCTION: Display all currently active users
-                elif message[3] == '/DisplayUsers':
+                elif tokenized_message[0] == '/DisplayUsers':
 
                     message[3] = '\n\nCURRENT USER(S) ONLINE\n' + str('-' * 22) + '\n' + "\n".join(
                         str(user) for user in AsyncServer.transport_map)
@@ -326,7 +270,7 @@ class AsyncServer(asyncio.Protocol):
 
                 # COMMAND: /DisplayAllUsers
                 # FUNCTION: Display all users who have ever accessed the server
-                elif message[3] == '/DisplayAllUsers':
+                elif tokenized_message[0] == '/DisplayAllUsers':
 
                     server_message = '\n\n   ALL USER(S)\n' + str('-' * 22) + '\n'
 
@@ -342,9 +286,6 @@ class AsyncServer(asyncio.Protocol):
                     dm = {"MESSAGES": [message]}
                     dm = json.dumps(dm).encode('ascii')
                     self.broadcast(message[1], dm)
-
-                else:
-                    pass
 
             # Those messages that are directed to all get appended to the
             # Monolithic message
@@ -362,20 +303,54 @@ class AsyncServer(asyncio.Protocol):
         msg = json.dumps(msg).encode('ascii')
         self.broadcast("ALL", msg)
 
+    # Takes answer data, forwards it to desktop, and stores it as needed
+    def answer_question(self, data):
+        pass
+
+    # Check for companion application
+    def has_companion(self):
+        if self.device_type == "DESKTOP":
+            return "MOBILE" in AsyncServer.transport_map[self.user_id] \
+                and AsyncServer.transport_map[self.user_id]["MOBILE"] is not None
+
+        elif self.device_type == "MOBILE":
+            return "DESKTOP" in AsyncServer.transport_map[self.user_id] \
+                and AsyncServer.transport_map[self.user_id]["DESKTOP"] is not None
+
+        else: return False
+
     # Remove client from the transport list upon connection lost and backup
     # data to the db
     def connection_lost(self, exc):
         # Check to make sure that the user is logged in
-        if self.username != None and self.username != '':
-            AsyncServer.transport_map.pop(self.username)
-            msg = {"USERS_LEFT": [self.username]}
-            msg = json.dumps(msg).encode('ascii')
-            self.broadcast("ALL", msg)
+        if self.user_id is not None and self.user_id != '':
+            if self.has_companion():
+                # Establish companion type
+                if self.device_type == "DESKTOP":
+                    companion = "MOBILE"
 
-            with open('server_data.pkl', 'wb') as f:
-                pickle.dump(AsyncServer.messages, f)
-                pickle.dump(AsyncServer.all_users_ever_logged, f)
-                pickle.dump(AsyncServer.client_blocked_users, f)
+                else:  # self.device_type == "MOBILE"
+                    companion = "DESKTOP"
+
+                # Create notification for mobile
+                msg = {"DATA_TYPE": "COMPANION_LEFT"}
+
+                # Set current transport to mobile companion
+                self.current_transport = AsyncServer.transport_map[self.user_id][companion]
+
+                # Send notification to mobile
+                self.broadcast(companion, msg)
+
+                # Remove desktop transport from map
+                AsyncServer.transport_map[self.user_id][self.device_type] = None
+
+            else:
+                # Free up space from transport map
+                AsyncServer.transport_map.pop(self.user_id)
+
+            self.db["all_users"] = AsyncServer.all_users_ever_logged
+
+            self.db.close()
 
 
 if __name__ == '__main__':
