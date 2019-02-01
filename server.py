@@ -180,7 +180,7 @@ class AsyncServer(asyncio.Protocol):
             self.broadcast("DESKTOP", data)
 
     # TODO: Backup data to server
-    def backup_data(self):
+    def backup_data(self, data):
         pass
 
     # Check for companion application
