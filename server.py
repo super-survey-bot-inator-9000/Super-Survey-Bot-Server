@@ -36,12 +36,18 @@ class AsyncServer(asyncio.Protocol):
 
         # Pull data from db upon client init
         self.db = shelve.open('data/client_lists')
-        AsyncServer.all_users_ever_logged = self.db["all_users"]
-        
+
+        try:
+            AsyncServer.all_users_ever_logged = self.db["all_users"]
+
+        except KeyError:
+            self.db["all_users"] = set()
+
         if AsyncServer.all_users_ever_logged is None:
             AsyncServer.all_users_ever_logged = set()
 
     def connection_made(self, transport):
+        print('ok')
         self.thread_transport = transport
         self.current_transport = transport
 
@@ -230,22 +236,19 @@ class AsyncServer(asyncio.Protocol):
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Example Server')
-    parser.add_argument('host', help='IP or hostname')
-    parser.add_argument('-p', metavar='port', type=int, default=9000,
-                        help='TCP port (default 9000)')
-    args = parser.parse_args()
-
     loop = asyncio.get_event_loop()
 
-    purpose = ssl.Purpose.CLIENT_AUTH
-    context = ssl.create_default_context(purpose, cafile='ca.crt')
-    context.load_cert_chain('localhost.pem')
+    coro = loop.create_server(AsyncServer, *("", 9000))
 
-    coro = loop.create_server(AsyncServer, *(args.host, args.p), ssl=context)
+    # SSL Version
+    # purpose = ssl.Purpose.CLIENT_AUTH
+    # context = ssl.create_default_context(purpose, cafile='ca.crt')
+    # context.load_cert_chain('localhost.pem')
+    #
+    # coro = loop.create_server(AsyncServer, *("", 9000), ssl=context)
 
     server = loop.run_until_complete(coro)
-    print('Listening at {}'.format((args.host, args.p)))
+    print('Listening at {}'.format(("", 9000)))
 
     try:
         loop.run_forever()
