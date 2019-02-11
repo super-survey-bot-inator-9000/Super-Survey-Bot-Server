@@ -117,6 +117,7 @@ class AsyncServer(asyncio.Protocol):
     #       has joined the server
     def validate_user(self, data):
         user_accept = {
+            "DATA_TYPE": "LOGIN_DATA",
             "USER_ID_VALID": False,
             "LOGIN_SUCCESSFUL": False,
             "COMPANION_ACTIVE": False
