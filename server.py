@@ -67,6 +67,7 @@ class AsyncServer(asyncio.Protocol):
     def broadcast(self, audience, data):
         if audience in AsyncServer.transport_map[self.user_id]:
             self.current_transport = AsyncServer.transport_map[self.user_id][audience]
+            data = json.dumps(data).encode('ascii')
             self.send_message(data)
 
     # Handles all data received from client
