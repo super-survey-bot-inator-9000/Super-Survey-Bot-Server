@@ -135,9 +135,10 @@ class AsyncServer(asyncio.Protocol):
             # If no user active with id and device type
             # User accepted
             if data["USER_ID"] not in AsyncServer.transport_map:
-                AsyncServer.transport_map[data["USER_ID"]] = {}
-                AsyncServer.transport_map[data["USER_ID"]][self.device_type] = self.thread_transport
-                AsyncServer.transport_map[data["USER_ID"]][companion] = None
+                AsyncServer.transport_map[data["USER_ID"]] = {
+                    self.device_type: self.thread_transport,
+                    companion: None
+                }
 
                 user_accept["LOGIN_SUCCESSFUL"] = True
 
