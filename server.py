@@ -125,7 +125,7 @@ class AsyncServer(asyncio.Protocol):
         }
 
         self.device_type = data["DEVICE_TYPE"]
-        companion = "DESKTOP" if self.device_type == "MOBILE" else "DESKTOP"
+        companion = "DESKTOP" if self.device_type == "MOBILE" else "MOBILE"
 
         if data["USER_ID"] in AsyncServer.all_users_ever_logged or \
                 self.device_type == "DESKTOP":
