@@ -4,6 +4,7 @@
 # Asynchronous I/O inside an "asyncio" coroutine.
 
 # Last modified by Alice Easter && Eric Cacciavillani on 4/26/18
+# Last modified as Super-Survey-Bot-Server by Alice Easter on 02/10/19
 import json
 
 import argparse
@@ -47,7 +48,6 @@ class AsyncServer(asyncio.Protocol):
             AsyncServer.all_users_ever_logged = set()
 
     def connection_made(self, transport):
-        print('ok')
         self.thread_transport = transport
         self.current_transport = transport
 
@@ -126,7 +126,7 @@ class AsyncServer(asyncio.Protocol):
         self.device_type = data["DEVICE_TYPE"]
         companion = "DESKTOP" if self.device_type == "MOBILE" else "DESKTOP"
 
-        if self.user_id in AsyncServer.all_users_ever_logged or \
+        if data["USER_ID"] in AsyncServer.all_users_ever_logged or \
                 self.device_type == "DESKTOP":
 
             user_accept["USER_ID_VALID"] = True
