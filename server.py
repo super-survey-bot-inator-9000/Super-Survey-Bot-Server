@@ -142,7 +142,7 @@ class AsyncServer(asyncio.Protocol):
                 user_accept["LOGIN_SUCCESSFUL"] = True
 
             # User id active on different device type
-            elif self.device_type not in AsyncServer.transport_map[self.user_id]:
+            elif self.device_type not in AsyncServer.transport_map[data["USER_ID"]]:
                 # Add current transport to map
                 AsyncServer.transport_map[data["USER_ID"]][self.device_type] = self.transport_map
 
