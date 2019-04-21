@@ -1,4 +1,4 @@
-# Chatterbox
+# Super Survey Bot Server
 An asyncronous chat server and client written in Python 3.
 
 ## Usage
